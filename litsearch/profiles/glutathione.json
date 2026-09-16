@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "glutathione",
+  "name": "微生物代谢工程生产谷胱甘肽",
+  "question": "微生物谷胱甘肽生产中哪些遗传改造与过程条件有可核查的产量证据？",
+  "products": ["glutathione", "谷胱甘肽"],
+  "pathway_terms": ["gsha", "gshb", "gshf", "gsh1", "gsh2"],
+  "hosts": ["saccharomyces", "escherichia coli", "e. coli", "candida", "corynebacterium", "microbial", "bacterial", "fermentation", "yeast"],
+  "interventions": ["metabolic engineering", "strain engineering", "engineered", "overexpression", "deletion", "knockout", "fermentation", "biocatalysis"],
+  "exclusions": ["clinical", "cancer", "dietary", "patient"]
+}

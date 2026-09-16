@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "pantothenate",
+  "name": "微生物代谢工程生产泛酸与泛醇",
+  "question": "哪些微生物、通路改造和发酵策略能够生产泛酸或泛醇？中间体与酶学研究仅作辅助证据。",
+  "products": ["pantothenic acid", "pantothenate", "vitamin b5", "panthenol", "dexpanthenol", "pantothenol", "泛酸", "泛醇"],
+  "pathway_terms": ["panb", "panc", "pand", "pane", "ketopantoate", "pantoate", "pantolactone"],
+  "hosts": ["escherichia coli", "e. coli", "bacillus", "corynebacterium", "saccharomyces", "yarrowia", "microbial", "bacterial", "fermentation", "whole-cell", "biocatalysis"],
+  "interventions": ["metabolic engineering", "strain engineering", "engineered", "overexpression", "deletion", "knockout", "fermentation", "biocatalysis", "biocatalytic", "whole-cell"],
+  "exclusions": ["clinical", "topical", "infection", "cosmetic", "supplementation", "nutrition", "drug target"]
+}

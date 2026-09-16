@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "d-pan-literature-pipeline"
+version = "3.0.0"
+description = "Topic-configurable microbial metabolic engineering literature evidence pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1,<4",
+    "pypdf>=5,<7",
+]
+
+[project.scripts]
+literature-search = "litsearch.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["litsearch*", "litsearch_zotero*"]
+
+[tool.setuptools.package-data]
+litsearch = ["profiles/*.json"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]

@@ -1,0 +1,22 @@
+[
+  {
+    "title": "SYNTHETIC — pantothenate pathway demonstration record",
+    "abstract": "SYNTHETIC demonstration text only. A fictional pantothenate pathway example mentions 12 units in one sentence; this is not a biological result.",
+    "authors": [],
+    "doi": "",
+    "pmid": "",
+    "pmcid": "",
+    "url": "",
+    "source_ids": ["synthetic-001"]
+  },
+  {
+    "title": "SYNTHETIC — unverified microbial screening example",
+    "abstract": "SYNTHETIC input for offline software testing. The phrase metabolic engineering and 3.5 units are fictional and cannot support a scientific claim.",
+    "authors": [],
+    "doi": "",
+    "pmid": "",
+    "pmcid": "",
+    "url": "",
+    "source_ids": ["synthetic-002"]
+  }
+]

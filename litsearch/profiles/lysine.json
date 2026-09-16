@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "lysine",
+  "name": "微生物代谢工程生产赖氨酸",
+  "question": "微生物赖氨酸生产中，宿主、碳流、辅因子和发酵改造的证据是什么？",
+  "products": ["lysine", "l-lysine", "赖氨酸"],
+  "pathway_terms": ["lysc", "dapa", "dapb", "lysa", "lyse", "aspartokinase"],
+  "hosts": ["corynebacterium", "escherichia coli", "e. coli", "bacillus", "microbial", "bacterial", "fermentation"],
+  "interventions": ["metabolic engineering", "strain engineering", "engineered", "overexpression", "deletion", "knockout", "fermentation", "adaptive laboratory evolution"],
+  "exclusions": ["clinical", "dietary", "nutrition", "histone", "acetylation"]
+}
