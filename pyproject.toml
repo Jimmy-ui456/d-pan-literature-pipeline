@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 literature-search = "litsearch.cli:main"
+engineering-review = "litsearch.engineering:main"
 
 [tool.setuptools.packages.find]
 include = ["litsearch*", "litsearch_zotero*"]

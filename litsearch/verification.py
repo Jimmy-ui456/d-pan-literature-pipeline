@@ -150,6 +150,12 @@ def verify_record(rec: Record, store: MetadataStore) -> list[AuditEvent]:
         remote = Record.from_dict(remote.to_dict())
         publication_years = _publication_years(payload) | ({remote.year} if remote.year else set())
         reasons = _metadata_conflicts(rec, remote, publication_years)
+        # Crossref supplies the full container title. Do not compare Europe PMC
+        # abbreviations, or silently overwrite an incorrect supplied journal.
+        # Unresolved abbreviations are also held for explicit correction.
+        if (source == "crossref" and rec.journal and remote.journal
+                and title_key(rec.journal) != title_key(remote.journal)):
+            reasons.append("期刊名称与Crossref不一致；缩写或曾用名也须明确核对")
         conflict = bool(reasons)
         conflicts |= conflict
         matched |= not conflict

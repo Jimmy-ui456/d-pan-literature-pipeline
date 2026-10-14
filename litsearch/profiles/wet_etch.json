@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "domain": "engineering",
+  "id": "wet_etch",
+  "name": "半导体湿法刻蚀",
+  "facets": [
+    {"id":"mechanism","label":"界面反应与传质","terms":["传质","反应动力学","transport","kinetics"],"query":"semiconductor wet etching reaction kinetics mass transport","source_kinds":["research","review","facility","vendor"]},
+    {"id":"oxide","label":"氧化物与HF/BOE","terms":["SiO₂","SiO2","BOE","氧化物开窗"],"query":"silicon dioxide HF buffered oxide wet etching mechanism","source_kinds":["research","facility","vendor"]},
+    {"id":"nitride","label":"氮化硅与3D NAND","terms":["3D NAND","SiN","氮化硅"],"query":"3D NAND silicon nitride phosphoric acid selective wet etching","source_kinds":["research","facility","vendor"]},
+    {"id":"silicon","label":"硅晶向刻蚀与MEMS","terms":["KOH","TMAH","MEMS","V槽","V 槽"],"query":"silicon anisotropic wet etching KOH TMAH MEMS","source_kinds":["research","review","facility"]},
+    {"id":"sige","label":"SiGe释放与GAA","terms":["SiGe","GAA","纳米片"],"query":"SiGe silicon selective wet etching nanosheet gate all around","source_kinds":["research","institution"]},
+    {"id":"digital_w","label":"钨与干湿循环精密去除","terms":["钨","tungsten","W循环","W 循环","W 路线","W回蚀","WO₃","WO3","quasi-ALE"],"query":"tungsten dry wet quasi atomic layer etching oxide dissolution","source_kinds":["research"]},
+    {"id":"iii_v","label":"III-V化合物半导体","terms":["III-V","III–V","GaAs","InP"],"query":"GaAs InP citric acid hydrogen peroxide wet etching selectivity","source_kinds":["research","review"]},
+    {"id":"packaging","label":"金属与UBM/RDL封装","terms":["UBM","RDL","种子层","金属图形"],"query":"under bump metallization redistribution layer selective wet etching","source_kinds":["research","vendor"]},
+    {"id":"drying","label":"干燥与结构完整性","terms":["干燥","坍塌","粘连","stiction"],"query":"semiconductor wet etching drying capillary collapse nanosheets","source_kinds":["research","review","vendor","institution"]},
+    {"id":"equipment","label":"商业装备与化学品","terms":["SCREEN","TEL","ACM","芯源微","MicroChemicals"],"query":"semiconductor wet etching batch single wafer equipment","source_kinds":["vendor"]},
+    {"id":"validation","label":"量测与设备验收","terms":["FAT","SAT","验收","SPC","量测"],"query":"semiconductor wet etching uniformity metrology process control","source_kinds":["research","facility","vendor"]},
+    {"id":"ehs","label":"安全污染与排放","terms":["HF","NIOSH","安全","排放"],"query":"semiconductor wet etching chemical safety contamination","source_kinds":["hazard","facility"]}
+  ],
+  "official_queries": [
+    {"kind":"facility","domain":"snfguide.stanford.edu","query":"wet etching silicon oxide nitride chemical composition"},
+    {"kind":"facility","domain":"nanolab.berkeley.edu","query":"VLSI etchants measurement uncertainty"},
+    {"kind":"vendor","domain":"screen.co.jp","query":"FC-3100 SU-3400 catalog version throughput"},
+    {"kind":"vendor","domain":"tel.com","query":"CELLESTA EXPEDIUS wet etching product specifications"},
+    {"kind":"vendor","domain":"acmr.com","query":"Ultra C wet etching Tahoe product specifications"},
+    {"kind":"vendor","domain":"kingsemi.com","query":"单片湿法刻蚀 UBM RDL"},
+    {"kind":"vendor","domain":"microchemicals.com","query":"wet etching technical data sheets"},
+    {"kind":"hazard","domain":"cdc.gov","query":"NIOSH hydrogen fluoride skin notation"}
+  ],
+  "boundaries": "Coverage is a lexical hint, not scientific completeness. Crossref searches are budgeted candidates. Official queries must be executed separately and readable source snapshots recorded. Engineering claims require explicit material, chemistry, temperature, time, geometry, measurement and uncertainty; unknown fields remain not_reported."
+}

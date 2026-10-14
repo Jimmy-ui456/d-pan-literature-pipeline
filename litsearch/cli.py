@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import __version__
-from .core import classify_and_score, extract_evidence, merge_records, passes_final_scope, record_fingerprint
+from .core import classify_and_score, extract_evidence, key_for, merge_records, passes_final_scope, record_fingerprint
 from .evidence import apply_review_decisions, build_evidence_cards, write_review_bundle
 from .models import AuditEvent, Record
 from .net import HttpClient
@@ -56,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-verification", action="store_true", help="重新请求核验元数据，跳过缓存。")
     parser.add_argument("--cache-max-age-days", type=int, default=7)
     parser.add_argument("--review-decisions", default="", help="人工填写的审阅JSON；须匹配课题、记录和证据。")
+    parser.add_argument(
+        "--supplement-manifest", default="",
+        help="可选JSON，显式列出本地补充材料文件及记录角色；不自动发现或下载补充材料。",
+    )
     parser.add_argument("--reuse-derived-fields", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--email", default=os.environ.get("LIT_SEARCH_EMAIL", ""))
     parser.add_argument("--openalex-api-key", default=os.environ.get("OPENALEX_API_KEY", ""))
@@ -85,6 +89,8 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("--from-json 文件不存在")
     if args.review_decisions and not Path(args.review_decisions).is_file():
         parser.error("--review-decisions 文件不存在")
+    if args.supplement_manifest and not Path(args.supplement_manifest).is_file():
+        parser.error("--supplement-manifest 文件不存在")
     if args.refresh_verification and args.from_json and not args.verify_online:
         parser.error("--refresh-verification 需要 --verify-online，或在线检索模式")
 
@@ -108,6 +114,49 @@ def _load_records(path: Path) -> list[Record]:
         except ValueError as exc:
             raise ValueError(f"第{index}条记录无效：{exc}") from exc
     return records
+
+
+def _load_supplement_manifest(path: Path, records: list[Record]) -> dict[str, list[dict[str, str]]]:
+    """Hash explicitly listed local supplement files for their matched records."""
+    if path.stat().st_size > 10 * 1024 * 1024:
+        raise ValueError("补充材料清单超过10MB")
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    if (not isinstance(payload, dict) or payload.get("schema_version") != 1
+            or not isinstance(payload.get("materials"), list)):
+        raise ValueError("补充材料清单必须使用schema_version=1和materials数组")
+
+    key_counts: dict[str, int] = {}
+    for record in records:
+        key = key_for(record)
+        key_counts[key] = key_counts.get(key, 0) + 1
+
+    dependencies: dict[str, list[dict[str, str]]] = {}
+    for index, item in enumerate(payload["materials"], 1):
+        if not isinstance(item, dict) or set(item) != {"record_key", "role", "path"}:
+            raise ValueError(
+                f"补充材料 {index} 必须且只能包含record_key、role、path；SHA-256由CLI计算"
+            )
+        record_key, role, material_path = item["record_key"], item["role"], item["path"]
+        if not isinstance(record_key, str) or not record_key:
+            raise ValueError(f"补充材料 {index} 缺少record_key")
+        if key_counts.get(record_key, 0) != 1:
+            raise ValueError(f"补充材料 {index} 的record_key不存在或不唯一")
+        if not isinstance(role, str) or not role:
+            raise ValueError(f"补充材料 {index} 缺少role")
+        if not isinstance(material_path, str) or not material_path:
+            raise ValueError(f"补充材料 {index} 缺少本地path")
+
+        local_path = Path(material_path)
+        if not local_path.is_absolute():
+            local_path = path.parent / local_path
+        if not local_path.is_file():
+            raise ValueError(f"补充材料 {index} 的本地文件不存在")
+        digest = hashlib.sha256()
+        with local_path.open("rb") as material_file:
+            for chunk in iter(lambda: material_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        dependencies.setdefault(record_key, []).append({"role": role, "sha256": digest.hexdigest()})
+    return dependencies
 
 
 def _safe_args(args: argparse.Namespace) -> dict[str, Any]:
@@ -176,6 +225,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError("全部检索源失败，不能把空结果报告为成功")
         write_records_json(out_dir / "raw_records.json", raw_records)
         merged = merge_records(raw_records, topic)
+        supplemental_dependencies = (
+            _load_supplement_manifest(Path(args.supplement_manifest), merged)
+            if args.supplement_manifest else {}
+        )
         requested = set()
         if args.review_decisions:
             review_path = Path(args.review_decisions)
@@ -199,18 +252,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # Re-screen authoritative abstracts. Keep ALL records and identity failures in
         # the audit instead of letting a conflict disappear behind relevance filtering.
         write_records_json(out_dir / "pre_download_records.json", candidates)
-        link_existing_pdfs(candidates, pdf_dir)
         if args.download_pdfs and not args.skip_download:
             verified = [rec for rec in candidates if rec.identity_status == "verified"]
+            # download_pdfs validates serialized paths itself; preserve them until
+            # that check so even undersized historical PDFs receive a rejection record.
+            link_existing_pdfs([rec for rec in candidates if rec.identity_status != "verified"], pdf_dir)
             events.extend(download_pdfs(verified, pdf_dir, client=client, email=args.email,
                           max_pdfs=args.max_pdfs or None, timeout=args.download_timeout,
                           max_urls_per_record=args.max_urls_per_record, max_pdf_bytes=args.max_pdf_mb * 1024 * 1024,
                           include_landing=args.discover_landing_pdfs and not args.skip_landing_discovery,
                           log_path=out_dir / "pdf_download_log.csv"))
+        else:
+            link_existing_pdfs(candidates, pdf_dir)
         if not args.skip_pdf_extraction:
             events.extend(enrich_from_pdfs(candidates, max_pages=args.max_pdf_pages))
         for rec in candidates:
-            build_evidence_cards(rec, topic)
+            build_evidence_cards(
+                rec,
+                topic,
+                supplemental_dependencies=supplemental_dependencies.get(key_for(rec), []),
+            )
         # Use all screened rows so human reviewers can rescue relevant rule false-negatives.
         # Rescued rows still need identity and evidence verification on a subsequent run.
         approved = apply_review_decisions(merged, topic, Path(args.review_decisions) if args.review_decisions else None)

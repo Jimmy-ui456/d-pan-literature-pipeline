@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import html
 import hashlib
+import json
 import os
 import re
+import tempfile
 import urllib.parse
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .core import (
@@ -19,39 +21,158 @@ from .core import (
     normalize_pdf_text,
 )
 from .models import AuditEvent, Record
-from .net import HttpClient, NetworkError
+from .net import HttpClient, NetworkError, redact_url
 from .sources import add_pdf_url
 
 
 @dataclass
 class PdfIndex:
     by_name: dict[str, Path]
+    paths: list[Path] = field(default_factory=list)
+    excluded_paths: set[str] = field(default_factory=set)
 
     @classmethod
     def build(cls, root: Path) -> "PdfIndex":
         by_name: dict[str, Path] = {}
+        paths: list[Path] = []
         if not root.exists():
-            return cls(by_name)
+            return cls(by_name, paths)
+        rejections = _load_pdf_rejections(root)
         try:
-            candidates = root.rglob("*.pdf")
+            candidates = sorted(root.rglob("*.pdf"), key=lambda p: (
+                0 if p.parent.name == "_litsearch_accepted" else 1, p.as_posix().casefold()
+            ))
             for path in candidates:
                 try:
                     if path.is_file() and path.stat().st_size > 1_000:
+                        path_key = str(path.resolve())
+                        rejected_hash = rejections.get(path_key)
+                        if rejected_hash and _sha256_file(path) == rejected_hash:
+                            continue
+                        paths.append(path)
                         by_name.setdefault(path.name.lower(), path)
                 except OSError:
                     continue
         except OSError:
             pass
-        return cls(by_name)
+        return cls(by_name, paths)
 
     def find(self, record: Record) -> Path | None:
-        current = self.by_name.get(safe_pdf_name(record).lower())
+        current_name = safe_pdf_name(record).lower()
+        current = self.by_name.get(current_name)
+        if current and str(current.resolve()) not in self.excluded_paths:
+            return current
+        # New accepted files get a content suffix when a historical filename
+        # already exists; recognize those without treating rejected artifacts as PDFs.
+        current_stem = Path(current_name).stem + "--"
+        for path in self.paths:
+            if str(path.resolve()) not in self.excluded_paths and path.name.lower().startswith(current_stem):
+                return path
         # Migration lookup only; a legacy filename never proves PDF identity.
         legacy = re.sub(r"[^A-Za-z0-9._-]+", "_", record.doi.replace("/", "_").replace(":", "_")) + ".pdf"
-        return current or (self.by_name.get(legacy.lower()) if record.doi else None)
+        legacy_path = self.by_name.get(legacy.lower()) if record.doi else None
+        if legacy_path and str(legacy_path.resolve()) not in self.excluded_paths:
+            return legacy_path
+        return None
 
     def add(self, path: Path) -> None:
+        if path not in self.paths:
+            self.paths.append(path)
         self.by_name[path.name.lower()] = path
+
+    def discard(self, path: Path) -> None:
+        resolved = str(path.resolve())
+        self.excluded_paths.add(resolved)
+        self.by_name = {name: candidate for name, candidate in self.by_name.items()
+                        if str(candidate.resolve()) != resolved}
+
+
+_PDF_REJECTIONS = ".litsearch_pdf_rejections.json"
+
+
+def _load_pdf_rejections(root: Path) -> dict[str, str]:
+    path = root / _PDF_REJECTIONS
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            return {str(key): value for key, value in payload.items()
+                    if isinstance(key, str) and isinstance(value, str)}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _remember_pdf_rejection(root: Path, path: Path) -> None:
+    """Keep invalid historical files out of later filename-only library lookups."""
+    if not path.is_file():
+        return
+    entries = _load_pdf_rejections(root)
+    entries[str(path.resolve())] = _sha256_file(path)
+    _atomic_write_bytes((root / _PDF_REJECTIONS),
+                        json.dumps(entries, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _clear_pdf_derivatives(record: Record) -> None:
+    record.results_excerpt = ""
+    record.results_pages = []
+    record.pdf_identity_status = "unverified"
+    record.pdf_sha256 = ""
+    record.evidence = []
+
+
+def _pdf_rejection_reason(record: Record, path: Path, max_pages: int = 80) -> str:
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(5)
+        if path.stat().st_size < 1_000 or not header.startswith(b"%PDF"):
+            return "响应不是有效PDF开头或小于1KB"
+        text = extract_text_from_pdf(path, max_pages=max_pages)
+    except Exception as exc:
+        return f"PDF读取失败：{type(exc).__name__}: {exc}"
+    if not text.strip():
+        return "PDF解析失败或未提取到文本"
+    if not pdf_matches_record(record, text):
+        if re.search(r"(?i)supplementary (?:material|information)|supporting information|additional file", text[:1500]):
+            return "检测到补充材料标记，不能作为正文"
+        return "PDF首页题名及DOI/PMID身份未同时匹配"
+    return ""
+
+
+def _store_candidate_pdf(pdf_dir: Path, record: Record, body: bytes, *, accepted: bool, attempt: int) -> Path:
+    if accepted:
+        target_dir = pdf_dir / "_litsearch_accepted"
+        base_name = safe_pdf_name(record)
+        base = target_dir / base_name
+        if base.is_file() and _sha256_file(base) == hashlib.sha256(body).hexdigest():
+            return base
+        if not base.exists():
+            target = base
+        else:
+            target = target_dir / f"{Path(base_name).stem}--{hashlib.sha256(body).hexdigest()[:16]}.pdf"
+            if target.is_file() and _sha256_file(target) == hashlib.sha256(body).hexdigest():
+                return target
+            while target.exists():
+                target = target.with_name(f"{target.stem}-{uuid.uuid4().hex[:8]}{target.suffix}")
+    else:
+        target_dir = pdf_dir / "_litsearch_rejected"
+        target = target_dir / f"{Path(safe_pdf_name(record)).stem}--{attempt}-{uuid.uuid4().hex}.rejected"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_bytes(target, body)
+    return target
+
+
+def _accept_pdf(record: Record, path: Path) -> None:
+    record.pdf_file = str(path.resolve())
+    record.pdf_identity_status = "matched"
+    record.pdf_sha256 = _sha256_file(path)
 
 
 def find_existing_pdf(record: Record, pdf_dir: Path, index: PdfIndex | None = None) -> Path | None:
@@ -201,13 +322,47 @@ def download_pdfs(
     log_path: Path | None = None,
 ) -> list[AuditEvent]:
     pdf_dir.mkdir(parents=True, exist_ok=True)
+    historical_files = {id(record): record.pdf_file for record in records}
     index = link_existing_pdfs(records, pdf_dir)
     downloaded = 0
     events: list[AuditEvent] = []
     for record in records:
         if max_pdfs is not None and downloaded >= max_pdfs:
             break
-        if record.pdf_file:
+        # A serialized path is a candidate, not proof. Re-establish PDF identity
+        # before reusing it, and clear derived evidence while that check runs.
+        _clear_pdf_derivatives(record)
+        historical = historical_files.get(id(record), "")
+        historical_path = Path(historical).resolve() if historical else None
+        if historical_path and historical_path.is_relative_to(pdf_dir.resolve()):
+            candidate_path = historical_path
+        else:
+            candidate_path = Path(record.pdf_file) if record.pdf_file else index.find(record)
+        accepted_existing = False
+        while candidate_path:
+            reason = _pdf_rejection_reason(record, candidate_path)
+            if not reason:
+                _accept_pdf(record, candidate_path)
+                events.append(AuditEvent(
+                    stage="pdf_identity", status="success", source="existing_pdf",
+                    record_key=key_for(record), url=str(candidate_path.resolve()),
+                    message=f"已解析并匹配题名及标识，复用正文；文件={candidate_path.resolve()}",
+                ))
+                accepted_existing = True
+                break
+            try:
+                _remember_pdf_rejection(pdf_dir, candidate_path)
+            except OSError as exc:
+                reason += f"；拒绝索引登记失败：{type(exc).__name__}: {exc}"
+            index.discard(candidate_path)
+            events.append(AuditEvent(
+                stage="pdf_identity", status="rejected", source="existing_pdf",
+                record_key=key_for(record), url=str(candidate_path.resolve()),
+                message=f"{reason}；历史文件保留且不覆盖；文件={candidate_path.resolve()}",
+            ))
+            record.pdf_file = ""
+            candidate_path = index.find(record)
+        if accepted_existing:
             continue
         events.extend(
             add_candidate_pdf_urls(
@@ -218,25 +373,28 @@ def download_pdfs(
                 include_landing=include_landing,
             )
         )
-        output = pdf_dir / safe_pdf_name(record)
-        for url in record.pdf_urls[:max_urls_per_record]:
+        for attempt, url in enumerate(record.pdf_urls[:max_urls_per_record], 1):
             try:
                 response = client.get_bytes(url, timeout=timeout, max_bytes=max_pdf_bytes)
-                if len(response.body) < 1_000 or not response.body.startswith(b"%PDF"):
-                    events.append(
-                        AuditEvent(
-                            stage="pdf_download",
-                            status="rejected",
-                            source="candidate_url",
-                            record_key=key_for(record),
-                            url=url,
-                            message=f"响应不是有效PDF开头或小于1KB；Content-Type={response.content_type}",
-                        )
-                    )
+                with tempfile.TemporaryDirectory(prefix="litsearch-pdf-") as staging:
+                    staged_pdf = Path(staging) / "candidate.pdf"
+                    staged_pdf.write_bytes(response.body)
+                    reason = _pdf_rejection_reason(record, staged_pdf)
+                if reason:
+                    rejected_path = _store_candidate_pdf(pdf_dir, record, response.body,
+                                                         accepted=False, attempt=attempt)
+                    events.append(AuditEvent(
+                        stage="pdf_download", status="rejected", source="candidate_url",
+                        record_key=key_for(record), url=url,
+                        message=(f"{reason}；Content-Type={response.content_type}; "
+                                 f"request_url={redact_url(url)}; final_url={redact_url(response.final_url)}; "
+                                 f"saved_file={rejected_path.resolve()}"),
+                    ))
                     continue
-                _atomic_write_bytes(output, response.body)
-                record.pdf_file = str(output.resolve())
-                index.add(output)
+                accepted_path = _store_candidate_pdf(pdf_dir, record, response.body,
+                                                     accepted=True, attempt=attempt)
+                _accept_pdf(record, accepted_path)
+                index.add(accepted_path)
                 downloaded += 1
                 events.append(
                     AuditEvent(
@@ -245,11 +403,13 @@ def download_pdfs(
                         source="candidate_url",
                         record_key=key_for(record),
                         url=response.final_url,
-                        message=f"下载 {len(response.body)} 字节",
+                        message=(f"正文解析并匹配题名及标识；请求URL={redact_url(url)}; "
+                                 f"最终URL={redact_url(response.final_url)}; 文件={accepted_path.resolve()}; "
+                                 f"下载 {len(response.body)} 字节"),
                     )
                 )
                 break
-            except (NetworkError, OSError) as exc:
+            except (NetworkError, OSError, ValueError) as exc:
                 events.append(
                     AuditEvent(
                         stage="pdf_download",

@@ -45,6 +45,23 @@ class CliIntegrationTests(unittest.TestCase):
             self.assertEqual(manifest["status"], "failed")
             self.assertEqual(manifest["counts"]["raw_before_failure"], 1)
 
+    def test_pubmed_failure_keeps_partial_checkpoint_and_id_diagnostic(self):
+        def partial_pubmed(*args, **kwargs):
+            kwargs["on_batch"]([Record(title="received PMID 1", doi="10.1234/one", pmid="1")])
+            kwargs["events"].append(AuditEvent("efetch_coverage", "failed",
+                                                '{"requested":["1","2"],"received":["1"],"missing":["2"]}',
+                                                source="pubmed"))
+            raise ValueError('PubMed efetch batch is incomplete: missing ["2"]')
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("litsearch.cli.fetch_pubmed", side_effect=partial_pubmed), self.assertRaises(RuntimeError):
+                run(self.args(root, ["--source", "pubmed", "--email", "a@example.org"]))
+            self.assertEqual(len(json.loads((root / "output/raw_records.json").read_text())), 1)
+            events = (root / "output/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn('missing', events)
+            self.assertIn('2', events)
+
     def test_all_sources_failed_not_completed_even_with_partial_allowed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 import time
 import urllib.parse
@@ -71,6 +72,59 @@ def record_from_openalex(item: dict[str, Any], source_label: str) -> Record:
     return rec
 
 
+def _openalex_batch(data: Any, per_query: int) -> tuple[list[dict[str, Any]], int]:
+    """Validate the small, single-page OpenAlex response contract."""
+    if not isinstance(data, dict):
+        raise ValueError("OpenAlex response must be an object")
+    if data.get("error"):
+        raise ValueError("OpenAlex response reported an API error")
+    results = data.get("results")
+    meta = data.get("meta")
+    if not isinstance(results, list):
+        raise ValueError("OpenAlex response results must be an array")
+    if not isinstance(meta, dict) or type(meta.get("count")) is not int or meta["count"] < 0:
+        raise ValueError("OpenAlex response meta.count must be a non-negative integer")
+    count = meta["count"]
+    if count < len(results):
+        raise ValueError("OpenAlex response count is smaller than the returned results")
+    expected = min(count, per_query)
+    if len(results) != expected:
+        raise ValueError("OpenAlex response is incomplete for the requested page")
+    valid: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            raise ValueError("OpenAlex response contains a non-object result")
+        title_value = item.get("display_name") or item.get("title")
+        if not isinstance(title_value, str):
+            raise ValueError("OpenAlex response contains a non-string title")
+        for field in ("primary_location", "best_oa_location", "biblio"):
+            value = item.get(field)
+            if value is not None and not isinstance(value, dict):
+                raise ValueError("OpenAlex response contains an invalid nested object")
+        locations = item.get("locations")
+        if locations is not None:
+            if not isinstance(locations, list) or any(not isinstance(location, dict) for location in locations):
+                raise ValueError("OpenAlex response contains invalid locations")
+        authorships = item.get("authorships")
+        if authorships is not None:
+            if not isinstance(authorships, list) or any(not isinstance(authorship, dict) for authorship in authorships):
+                raise ValueError("OpenAlex response contains invalid authorships")
+        abstract_index = item.get("abstract_inverted_index")
+        if abstract_index is not None and not isinstance(abstract_index, dict):
+            raise ValueError("OpenAlex response contains an invalid abstract index")
+        if abstract_index is not None and any(
+            not isinstance(word, str) or not isinstance(positions, list)
+            or any(type(position) is not int for position in positions)
+            for word, positions in abstract_index.items()
+        ):
+            raise ValueError("OpenAlex response contains an invalid abstract index")
+        title = norm_title(title_value)
+        if not title:
+            raise ValueError("OpenAlex response contains a result without a title")
+        valid.append(item)
+    return valid, count
+
+
 def fetch_openalex(
     per_query: int,
     *,
@@ -94,22 +148,47 @@ def fetch_openalex(
         params = {**common, "filter": f"title.search:{query}"}
         url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
         data = client.get_json(url)
-        for item in data.get("results") or []:
-            if isinstance(item, dict):
+        try:
+            items, total = _openalex_batch(data, per_query)
+        except ValueError as exc:
+            if events is not None:
+                events.append(AuditEvent("search_coverage", "failed", f"query={query}; {exc}", source="openalex"))
+            raise
+        try:
+            for item in items:
                 records.append(record_from_openalex(item, f"OpenAlex title:{query}"))
+        except (TypeError, AttributeError, ValueError):
+            if events is not None:
+                events.append(AuditEvent("search_coverage", "failed", f"query={query}; invalid result structure", source="openalex"))
+            raise ValueError("OpenAlex response contains an invalid result structure") from None
+        if on_batch:
+            on_batch(records[-len(items):] if items else [])
+        if events is not None:
+            events.append(AuditEvent("search_coverage", "truncated" if total > per_query else "success",
+                                     f"query={query}; available={total}; retrieved={len(items)}; 单页上限明确记录",
+                                     source="openalex"))
         sleeper(0.11)
     for query in ((topic.query("openalex"),) if topic else SEARCH_QUERIES):
         params = {**common, "search": query}
         url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
         data = client.get_json(url)
+        try:
+            items, total = _openalex_batch(data, per_query)
+        except ValueError as exc:
+            if events is not None:
+                events.append(AuditEvent("search_coverage", "failed", f"query={query}; {exc}", source="openalex"))
+            raise
         before = len(records)
-        for item in data.get("results") or []:
-            if isinstance(item, dict):
+        try:
+            for item in items:
                 records.append(record_from_openalex(item, f"OpenAlex search:{query}"))
+        except (TypeError, AttributeError, ValueError):
+            if events is not None:
+                events.append(AuditEvent("search_coverage", "failed", f"query={query}; invalid result structure", source="openalex"))
+            raise ValueError("OpenAlex response contains an invalid result structure") from None
         if on_batch:
             on_batch(records[before:])
         if events is not None:
-            total = int((data.get("meta") or {}).get("count", len(records) - before))
             events.append(AuditEvent("search_coverage", "truncated" if total > per_query else "success",
                                      f"query={query}; available={total}; retrieved={len(records) - before}; 单页上限明确记录",
                                      source="openalex"))
@@ -151,6 +230,7 @@ def fetch_pubmed(
     if not 1 <= max_results <= 10_000:
         raise ValueError("max_results must be between 1 and 10000")
     records: list[Record] = []
+    seen_pmids: set[str] = set()
     common = _pubmed_common_params(email, api_key)
     delay = 0.11 if api_key else 0.34
     for query in ((topic.query("pubmed"),) if topic else PUBMED_QUERIES):
@@ -189,6 +269,8 @@ def fetch_pubmed(
             if root.find(".//ERROR") is not None:
                 raise ValueError("PubMed efetch returned an error")
             before = len(records)
+            batch: list[Record] = []
+            received_ids: list[str] = []
             for article in root.findall(".//PubmedArticle"):
                 medline = article.find("./MedlineCitation")
                 art = medline.find("./Article") if medline is not None else None
@@ -216,6 +298,8 @@ def fetch_pubmed(
                 doi = ""
                 pmcid = ""
                 pmid = medline.findtext("./PMID", default="") if medline is not None else ""
+                if not pmid or not title:
+                    continue
                 for identifier in article.findall("./PubmedData/ArticleIdList/ArticleId"):
                     kind = identifier.attrib.get("IdType", "")
                     if kind == "doi":
@@ -245,11 +329,35 @@ def fetch_pubmed(
                 )
                 if pmcid:
                     add_pdf_url(rec, f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/")
-                records.append(rec)
-            if len(records) - before != len(chunk):
-                raise ValueError("PubMed efetch returned fewer articles than requested; check source coverage")
+                batch.append(rec)
+                received_ids.append(str(pmid))
+            requested_ids = set(chunk)
+            received_set = set(received_ids)
+            missing = sorted(requested_ids - received_set)
+            unexpected = sorted(received_set - requested_ids)
+            duplicates = sorted({pmid for pmid in received_ids if received_ids.count(pmid) > 1})
+            diagnostics = {"requested": chunk, "received": received_ids, "missing": missing,
+                           "unexpected": unexpected, "duplicate": duplicates}
+            unique_batch: list[Record] = []
+            batch_seen: set[str] = set()
+            for record in batch:
+                if record.pmid and record.pmid not in seen_pmids and record.pmid not in batch_seen:
+                    unique_batch.append(record)
+                    batch_seen.add(record.pmid)
+            seen_pmids.update(record.pmid for record in unique_batch if record.pmid)
+            records.extend(unique_batch)
+            if on_batch and unique_batch:
+                on_batch(unique_batch)
+            if missing or unexpected or duplicates or len(received_ids) != len(chunk):
+                if events is not None:
+                    events.append(AuditEvent("efetch_coverage", "failed", json.dumps(diagnostics, ensure_ascii=False, sort_keys=True), source="pubmed"))
+                raise ValueError("PubMed efetch batch is incomplete: " + json.dumps(diagnostics, ensure_ascii=False, sort_keys=True))
             if on_batch:
-                on_batch(records[before:])
+                # Complete batches are checkpointed exactly once as well.
+                if not batch:
+                    on_batch([])
+            if events is not None:
+                events.append(AuditEvent("efetch_coverage", "success", json.dumps(diagnostics, ensure_ascii=False, sort_keys=True), source="pubmed"))
             sleeper(delay)
     return records
 

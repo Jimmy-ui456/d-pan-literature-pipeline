@@ -80,3 +80,7 @@ python -m litsearch_zotero.audit_missing_pdfs --help
 附件工具默认是 dry-run，但仍可能读取本机 API；只有显式 `--apply` 才会写入。对真实 Zotero 库操作前，应先审阅 dry-run 输出并备份数据。
 
 限制、架构和参与方式分别见 [docs/limitations.md](docs/limitations.md)、[docs/architecture.md](docs/architecture.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。当前未授予开源使用许可，`LICENSE-CANDIDATE.txt` 仅为历史候选文本；见 [LICENSE-STATUS.md](LICENSE-STATUS.md)。
+
+## 工程主题与Word报告预检
+
+新增独立 `engineering-review` / `python -m litsearch.engineering` 入口，支持湿法刻蚀分面计划、Crossref候选检索及引用/条件预检。它使用独立工程配置，不改变旧微生物筛选和审批规则。运行流程、输入格式和边界见 [工程检索与预检说明](docs/ENGINEERING_REVIEW.md)。
