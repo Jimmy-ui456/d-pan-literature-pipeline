@@ -88,3 +88,27 @@ class ReleaseCheckTests(unittest.TestCase):
             root = self.prepared_root(Path(temp)); sentinel = root / "sentinel.txt"; sentinel.write_text("keep", encoding="utf-8")
             process = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root), "--prepare-stage", str(root)], text=True, capture_output=True, check=False)
             self.assertNotEqual(process.returncode, 0); self.assertTrue(sentinel.exists())
+
+
+    def test_exact_openalex_redaction_sentinels_pass(self) -> None:
+        for name in ("test_sources.py", "test_publication_sources.py"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                root = self.prepared_root(Path(temp))
+                target = root / "tests" / name
+                target.parent.mkdir()
+                target.write_text('api_' + 'key=' + json.dumps('KEY_SENTINEL') + '\n', encoding="utf-8")
+                self.assertEqual(self.run_check(root).returncode, 0)
+
+    def test_redaction_sentinel_exception_does_not_hide_other_credentials(self) -> None:
+        for name, assignment in (
+            ("test_sources.py", 'api_' + 'key=' + json.dumps('KEY_SENTINEL_CHANGED')),
+            ("test_sources.py", 'to' + 'ken=' + json.dumps('KEY_SENTINEL')),
+            ("test_other.py", 'api_' + 'key=' + json.dumps('KEY_SENTINEL')),
+        ):
+            with self.subTest(name=name, assignment=assignment), tempfile.TemporaryDirectory() as temp:
+                root = self.prepared_root(Path(temp))
+                target = root / "tests" / name
+                target.parent.mkdir()
+                target.write_text(assignment + "\n", encoding="utf-8")
+                findings = json.loads(self.run_check(root).stdout)["findings"]
+                self.assertIn("generic_assignment", {item["rule"] for item in findings})

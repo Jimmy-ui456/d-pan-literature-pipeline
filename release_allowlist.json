@@ -1,14 +1,55 @@
 {
-  "root_files": [".gitignore", "README.md", "CONTRIBUTING.md", "LICENSE-CANDIDATE.txt", "LICENSE-STATUS.md", "pyproject.toml", "MANIFEST.in", "release_allowlist.json"],
+  "root_files": [
+    ".gitignore",
+    "README.md",
+    "CONTRIBUTING.md",
+    "LICENSE-CANDIDATE.txt",
+    "LICENSE-STATUS.md",
+    "pyproject.toml",
+    "MANIFEST.in",
+    "release_allowlist.json",
+    "LICENSE"
+  ],
   "directories": {
-    ".github/workflows": [".yml", ".yaml"],
-    "docs": [".md"],
-    "examples/synthetic": [".json"],
-    "litsearch": [".py", ".json"],
-    "litsearch_zotero": [".py"],
-    "scripts": [".py"],
-    "tests": [".py"]
+    ".github/workflows": [
+      ".yml",
+      ".yaml"
+    ],
+    "docs": [
+      ".md"
+    ],
+    "examples/synthetic": [
+      ".json"
+    ],
+    "litsearch": [
+      ".py",
+      ".json"
+    ],
+    "litsearch_zotero": [
+      ".py"
+    ],
+    "scripts": [
+      ".py"
+    ],
+    "tests": [
+      ".py"
+    ]
   },
-  "forbidden_parts": [".git", ".validation", "build", "dist", "__pycache__", "egg-info"],
-  "forbidden_suffixes": [".pyc", ".pyo", ".pdf", ".sqlite", ".zip", ".whl", ".tar.gz"]
+  "forbidden_parts": [
+    ".git",
+    ".validation",
+    "build",
+    "dist",
+    "__pycache__",
+    "egg-info"
+  ],
+  "forbidden_suffixes": [
+    ".pyc",
+    ".pyo",
+    ".pdf",
+    ".sqlite",
+    ".zip",
+    ".whl",
+    ".tar.gz"
+  ]
 }

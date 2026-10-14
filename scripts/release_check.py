@@ -8,6 +8,10 @@ ABSOLUTE_PATH = re.compile(r"(?:(?<![A-Za-z])[A-Za-z]:[\\/][^\s\"']*|(?:file://)
 CREDENTIALS = {"github_token": re.compile(r"gh[pousr]_[A-Za-z0-9_]{20,}"), "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"), "private_key": re.compile(r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----"), "generic_assignment": re.compile(r"(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"][^'\"]{12,}")}
 # Each exception is exact fixed public fixture text, never a file-wide bypass.
 NARROW_EXCEPTIONS = {
+    # These exact values are synthetic redaction sentinels passed to fake clients.
+    # Keep scanning every other assignment in these files and all other files.
+    ("tests/test_sources.py", "generic_assignment", 'api_key=' + '"KEY_SENTINEL'),
+    ("tests/test_publication_sources.py", "generic_assignment", 'api_key=' + '"KEY_SENTINEL'),
     ("tests/test_net.py", "absolute_local_path", "file:" + "//" + "/" + "etc/passwd"),
     ("tests/extensions/test_zotero_safety.py", "absolute_local_path", "file:" + "//" + "/" + "tmp/zotero"),
 }
@@ -84,7 +88,7 @@ def archive_members(archive: Path) -> list[tuple[str,bool]]:
 def archive_allowed(rel: str, kind: str, config: dict) -> bool:
     try: rel=safe_rel(rel)
     except ValueError: return False
-    if kind=="wheel": return ((rel.startswith("litsearch/") and rel.endswith((".py",".json"))) or (rel.startswith("litsearch_zotero/") and rel.endswith(".py")) or re.fullmatch(r"d_pan_literature_pipeline-3\.0\.0\.dist-info/(METADATA|WHEEL|entry_points\.txt|RECORD|top_level\.txt|licenses/LICENSE-(CANDIDATE\.txt|STATUS\.md))",rel) is not None)
+    if kind=="wheel": return ((rel.startswith("litsearch/") and rel.endswith((".py",".json"))) or (rel.startswith("litsearch_zotero/") and rel.endswith(".py")) or re.fullmatch(r"d_pan_literature_pipeline-3\.0\.0\.dist-info/(METADATA|WHEEL|entry_points\.txt|RECORD|top_level\.txt|licenses/LICENSE(?:-(CANDIDATE\.txt|STATUS\.md))?)",rel) is not None)
     root="d_pan_literature_pipeline-3.0.0/"
     if rel == root[:-1]: return True
     if not rel.startswith(root): return False

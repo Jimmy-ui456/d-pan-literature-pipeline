@@ -1,4 +1,4 @@
-include .gitignore README.md CONTRIBUTING.md LICENSE-CANDIDATE.txt LICENSE-STATUS.md pyproject.toml MANIFEST.in release_allowlist.json
+include LICENSE .gitignore README.md CONTRIBUTING.md LICENSE-CANDIDATE.txt LICENSE-STATUS.md pyproject.toml MANIFEST.in release_allowlist.json
 recursive-include litsearch *.py *.json
 recursive-include litsearch_zotero *.py
 recursive-include tests *.py

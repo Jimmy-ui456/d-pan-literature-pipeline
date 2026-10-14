@@ -5,3 +5,10 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Local runs and credentials
+outputs/
+outputs_*/
+pdf_library/
+.env
+.env.*
