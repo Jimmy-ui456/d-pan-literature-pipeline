@@ -1,6 +1,6 @@
 """Audit a deliberately small source candidate and its built archives."""
 from __future__ import annotations
-import argparse, hashlib, json, re, shutil, stat, tarfile, zipfile
+import argparse, configparser, hashlib, json, re, shutil, stat, tarfile, zipfile
 from pathlib import Path, PurePosixPath
 
 DEFAULT_CONFIG = "release_allowlist.json"
@@ -85,6 +85,17 @@ def archive_members(archive: Path) -> list[tuple[str,bool]]:
     if archive.suffix==".whl" or zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as z: return [(x.filename,stat.S_ISLNK(x.external_attr>>16)) for x in z.infolist()]
     with tarfile.open(archive,"r:*") as t: return [(x.name,x.issym() or x.islnk()) for x in t.getmembers()]
+def dependency_contract(line: str, package: str, bounds: tuple[str, ...], extra: str | None = None) -> bool:
+    """Match exact emitted constraints/marker, never substrings like <4 in <40."""
+    compact = re.sub(r"\s+", "", line).lower()
+    requirement, _, marker = compact.partition(";")
+    match = re.fullmatch(r"requires(?:-dist)?:" + re.escape(package.lower()) + r"(\([^)]*\)|[<>=!~].*)", requirement)
+    if not match or set(match[1].strip("()").split(",")) != set(bounds):
+        return False
+    if extra is None:
+        return not marker
+    return marker in {f'extra=="{extra}"', f"extra=='{extra}'"}
+
 def archive_allowed(rel: str, kind: str, config: dict) -> bool:
     try: rel=safe_rel(rel)
     except ValueError: return False
@@ -102,7 +113,9 @@ def inspect_archive(archive: Path, config: dict) -> dict:
     for req in ("litsearch/profiles/pantothenate.json","litsearch/profiles/lysine.json","litsearch/profiles/glutathione.json"):
         expected=req if kind=="wheel" else "d_pan_literature_pipeline-3.0.0/"+req
         if expected not in names: findings.append({"path":expected,"rule":"required_member_missing"})
-    required_modules=("litsearch/__init__.py","litsearch/cli.py","litsearch/core.py","litsearch_zotero/__init__.py","litsearch_zotero/attach_pdfs.py")
+    required_modules=("litsearch/__init__.py","litsearch/cli.py","litsearch/core.py",
+                      "litsearch/service_probe.py","litsearch/discovery.py","litsearch/document_parse.py",
+                      "litsearch_zotero/__init__.py","litsearch_zotero/attach_pdfs.py")
     for req in required_modules:
         expected=req if kind=="wheel" else "d_pan_literature_pipeline-3.0.0/"+req
         if expected not in names: findings.append({"path":expected,"rule":"required_member_missing"})
@@ -116,9 +129,38 @@ def inspect_archive(archive: Path, config: dict) -> dict:
         findings.append({"path":str(metadata_name),"rule":"metadata_missing_or_unreadable"}); metadata=""
     normalized={line.replace(" ", "") for line in metadata.splitlines() if line.startswith("Requires-Dist:") or line.startswith("Requires:")}
     for requirement in ("openpyxl>=3.1,<4", "pypdf>=5,<7"):
-        package, constraints=requirement.split(">=",1); expected={">="+constraints.split(",")[0], "<"+constraints.split(",")[1][1:]}
-        actual=next((line for line in normalized if line.lower().startswith(("requires-dist:"+package).lower()) or line.lower().startswith(("requires:"+package).lower())), "")
-        if not actual or not all(piece in actual for piece in expected): findings.append({"path":str(metadata_name),"rule":"required_dependency_constraint_missing","detail":requirement})
+        package, constraints=requirement.split(">=",1); expected=(">="+constraints.split(",")[0], "<"+constraints.split(",")[1][1:])
+        if not any(dependency_contract(line, package, expected) for line in normalized): findings.append({"path":str(metadata_name),"rule":"required_dependency_constraint_missing","detail":requirement})
+    optional = {
+        "tables": {"pdfplumber": (">=0.11", "<0.12")},
+        "ocr": {"pdfplumber": (">=0.11", "<0.12"), "pypdfium2": (">=4.30", "<6"), "pillow": (">=10", "<13")},
+        "parsing": {"pdfplumber": (">=0.11", "<0.12"), "pypdfium2": (">=4.30", "<6"),
+                    "pillow": (">=10", "<13")},
+    }
+    for extra, requirements in optional.items():
+        for package, bounds in requirements.items():
+            if not any(dependency_contract(line, package, bounds, extra) for line in normalized):
+                findings.append({"path":str(metadata_name), "rule":"optional_dependency_missing",
+                                 "detail":extra + ":" + package})
+    entry_name = (next((n for n in names if n.endswith(".dist-info/entry_points.txt")), None)
+                  if kind == "wheel" else "d_pan_literature_pipeline-3.0.0/d_pan_literature_pipeline.egg-info/entry_points.txt")
+    expected_entries = {
+        "literature-service-probe": "litsearch.service_probe:main",
+        "literature-discover": "litsearch.discovery:main",
+        "literature-parse": "litsearch.document_parse:main",
+    }
+    entries = configparser.ConfigParser(interpolation=None)
+    try:
+        if kind == "wheel":
+            with zipfile.ZipFile(archive) as z: entry_text = z.read(entry_name).decode("utf-8")
+        else:
+            with tarfile.open(archive, "r:*") as t: entry_text = t.extractfile(entry_name).read().decode("utf-8")
+        entries.read_string(entry_text)
+    except (KeyError, AttributeError, UnicodeDecodeError, configparser.Error):
+        findings.append({"path":str(entry_name), "rule":"tool_entrypoints_missing_or_invalid"})
+    for name, target in expected_entries.items():
+        if entries.get("console_scripts", name, fallback="").strip() != target:
+            findings.append({"path":str(entry_name), "rule":"tool_entrypoint_missing", "detail":name})
     return {"archive":str(archive),"kind":kind,"sha256":hashlib.sha256(archive.read_bytes()).hexdigest(),"members":names,"findings":findings,"result":"pass" if not findings else "fail"}
 def main() -> int:
     p=argparse.ArgumentParser(); p.add_argument("--root",type=Path,default=Path.cwd()); p.add_argument("--prepare-stage",type=Path); p.add_argument("--archive",type=Path,action="append"); p.add_argument("--archive-only",action="store_true"); p.add_argument("--report",type=Path); a=p.parse_args(); root=a.root.resolve(); config=load_config(root)

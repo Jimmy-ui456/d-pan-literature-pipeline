@@ -58,11 +58,20 @@ def main() -> int:
                 raise SystemExit(f"{name} was not imported from site-packages: {module_path}")
         print(json.dumps({"installed_sources": locations}, ensure_ascii=False))
 
+        for module in ("service_probe", "discovery", "document_parse"):
+            run([sys.executable, "-m", "litsearch." + module, "--help"], cwd=fixture, env=env)
+
         run([sys.executable, "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=fixture, env=env)
         demo_out = args.demo_out.resolve()
         demo_out.parent.mkdir(parents=True, exist_ok=True)
         run(
             [sys.executable, "-X", "utf8", str(fixture / "scripts" / "run_synthetic_demo.py"), "--out-dir", str(demo_out)],
+            cwd=fixture,
+            env=env,
+        )
+        run(
+            [sys.executable, "-X", "utf8", str(fixture / "scripts" / "run_engineering_tools_demo.py"),
+             "--out-dir", str(demo_out.with_name(demo_out.name + "-tools"))],
             cwd=fixture,
             env=env,
         )

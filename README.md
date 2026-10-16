@@ -4,9 +4,23 @@
 
 这是一个面向综述准备的文献检索与证据整理工具，当前提供可配置的微生物代谢工程课题与独立工程主题预检。它把检索、去重、身份核验、PDF 身份比对、证据定位和人工审阅分开保存；候选记录、自动分类或同句数字都不是科学结论。
 
+## 唯一源码与发布入口
+
+本 Git 仓库就是唯一源码入口：在原研究工作区中路径为 `github_release/literature-search/`；独立克隆后直接使用克隆根目录。功能代码、配置、测试、文档和打包配置只在这里维护。外层工作区的历史脚本只作转发，不再同步另一套实现。
+
+发行文件由脚本生成，不能当作另一份源码编辑：
+
+```powershell
+python -m pip install -e ".[parsing,test,release]"
+python -m unittest discover -s tests -v
+python scripts/build_release.py --out-dir dist/local-release
+```
+
+脚本生成白名单源码 ZIP、wheel、sdist 和 SHA-256 清单；输出目录必须是新的 `dist/` 子目录。CI 使用同一发布脚本。日常上传 GitHub 只需在本仓库检查改动、提交和推送；无需复制源码或同步工作区。详细流程见 [RELEASING.md](docs/RELEASING.md)，详细管线用法见 [PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)。
+
 ## 安装
 
-需要 Python 3.10 或更高版本。在发行根目录创建独立环境后安装：
+需要 Python 3.10 或更高版本。在本仓库根目录创建独立环境后安装：
 
 ```powershell
 py -3 -m venv .venv
@@ -86,6 +100,10 @@ python -m litsearch_zotero.audit_missing_pdfs --help
 ## 工程主题与Word报告预检
 
 新增独立 `engineering-review` / `python -m litsearch.engineering` 入口，支持湿法刻蚀分面计划、Crossref候选检索及引用/条件预检。它使用独立工程配置，不改变旧微生物筛选和审批规则。运行流程、输入格式和边界见 [工程检索与预检说明](docs/ENGINEERING_REVIEW.md)。
+
+## 联网验证、补漏检、表格与 OCR
+
+新增三个独立命令：`literature-service-probe`、`literature-discover`、`literature-parse`。前两个默认只生成离线计划；第三个仅解析显式指定的本地 PDF/HTML/图片。解析依赖按需安装，OCR 需外部 Tesseract；结果保留原文位置与待核对状态。完整用法及合成演示见 [工程工具说明](docs/ENGINEERING_TOOLS.md)。
 
 ## 发布状态与反馈
 

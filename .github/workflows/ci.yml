@@ -21,14 +21,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package and build tools
-        run: python -m pip install --upgrade pip build
-      - name: Prepare allowlisted stage
-        run: python scripts/release_check.py --root . --prepare-stage .validation/ci-stage
-      - name: Build wheel and sdist from stage
-        run: python -m build --outdir .validation/dist .validation/ci-stage
-      - name: Enforce archive gate
-        run: python scripts/release_check.py --root .validation/ci-stage --archive-only --archive .validation/dist/d_pan_literature_pipeline-3.0.0-py3-none-any.whl --archive .validation/dist/d_pan_literature_pipeline-3.0.0.tar.gz
+        run: python -m pip install --upgrade pip build "setuptools>=77" "wheel>=0.45,<1"
+      - name: Generate and gate release from the source checkout
+        run: python scripts/build_release.py --out-dir dist/ci-release
       - name: Install built wheel
-        run: python -m pip install --force-reinstall .validation/dist/d_pan_literature_pipeline-3.0.0-py3-none-any.whl
+        run: python -m pip install --force-reinstall "dist/ci-release/artifacts/d_pan_literature_pipeline-3.0.0-py3-none-any.whl[parsing,test]"
+      - name: Install OCR engine for synthetic integration checks
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
       - name: Validate installed wheel outside checkout
-        run: python .validation/ci-stage/scripts/ci_validate_installed.py --fixture-source .validation/ci-stage --source-root . --demo-out .validation/ci-demo
+        run: python dist/ci-release/source/scripts/ci_validate_installed.py --fixture-source dist/ci-release/source --source-root . --demo-out .validation/ci-demo

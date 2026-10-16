@@ -15,9 +15,19 @@ dependencies = [
     "pypdf>=5,<7",
 ]
 
+[project.optional-dependencies]
+tables = ["pdfplumber>=0.11,<0.12"]
+ocr = ["pdfplumber>=0.11,<0.12", "pypdfium2>=4.30,<6", "Pillow>=10,<13"]
+parsing = ["pdfplumber>=0.11,<0.12", "pypdfium2>=4.30,<6", "Pillow>=10,<13"]
+test = ["reportlab>=4,<5"]
+release = ["build>=1.2,<2", "setuptools>=77", "wheel>=0.45,<1"]
+
 [project.scripts]
 literature-search = "litsearch.cli:main"
 engineering-review = "litsearch.engineering:main"
+literature-service-probe = "litsearch.service_probe:main"
+literature-discover = "litsearch.discovery:main"
+literature-parse = "litsearch.document_parse:main"
 
 [tool.setuptools.packages.find]
 include = ["litsearch*", "litsearch_zotero*"]
